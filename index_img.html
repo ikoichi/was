@@ -1,0 +1,542 @@
+<html>
+<head>
+	<title>Web-based Collaborative Sequencer</title>
+	
+	<link href="js/jquery-ui-1.8.custom/css/ui-darkness/jquery-ui-1.8.custom.css" rel="stylesheet" type="text/css"/>
+	<style type="text/css">
+	body{
+		padding: 0px;
+		margin: 0px;
+		background-color: #CACACA;
+		font-family: Arial;
+		font-size: 0.8em;
+		text-shadow: 0px 1px 0px white;
+	}
+	canvas {
+		-moz-box-shadow: 1px 1px 5px black;
+		-webkit-box-shadow: 1px 1px 5px black;
+	}
+	
+	.waveform {
+		-moz-box-shadow: 1px 1px 5px black;
+		-webkit-box-shadow: 1px 1px 5px black;
+	}
+	
+	.track-header{
+		width: 100px;
+		background-image: -webkit-gradient(
+				linear,
+				left bottom,
+				left top,
+				color-stop(0, rgb(138,138,138)),
+				color-stop(1, rgb(168,168,168))
+		);
+		background-image: -moz-linear-gradient(
+				center bottom,
+				rgb(138,138,138) 0%,
+				rgb(168,168,168) 100%
+		);
+		border-top: 1px solid #D6D6D6;
+		border-bottom: 1px solid #5B5B5B;
+
+	}
+	ul{
+		background-color: #5B5B5B;
+	}
+	.track-label{
+		margin-top: 30px; 
+		position: absolute; 
+		padding: 5px;
+		text-shadow: 0 1px 0 #D1D1D1;
+	}
+	</style>
+	<script type="text/javascript" src="js/jquery-1.4.min.js"></script>
+	<script type="text/javascript" src="js/jquery-ui-1.8.custom/js/jquery-ui-1.8.custom.min.js"></script>
+	<script type="text/javascript" src="js/jquery.jeditable.mini.js"></script>
+	<script type="text/javascript" src="js/swfobject.js"></script>
+	<script type="text/javascript" src="js/canvas2image.js"></script>
+	<script type="text/javascript" src="js/base64.js"></script>
+	
+	
+	<script type="text/javascript">
+	
+		var MOVIE_NAME = "AudioEngineRunner";
+		
+		var TIMELINE_WIDTH = 0;
+		var CURSOR_POSITION_OFFSET = 0;
+		
+		var soundsStore = new Array();
+		
+		var positionInterval;
+		var readyInterval = -1;
+		
+		var pausePosition = 0;
+		
+		function init(){
+		
+			var swf = 'AudioEngineRunner.swf';  
+			var flashvars = {};
+			var params = {
+				allowScriptAccess: 'always',
+				wmode: 'transparent'
+			};
+			var attributes = {
+				id : 'AudioEngineRunner'
+			};
+			var version = swfobject.getFlashPlayerVersion();
+			toLog("Flash Player Version: "+version.major+"."+version.major+"."+version.release);
+			var requestedVersion = 10;
+			if (version.major < requestedVersion) {
+				toLog("You need at least Adobe Flash Player version 9, please upgrade your Flash plugin");
+				alert("You need at least Adobe Flash Player version 9, please upgrade your Flash plugin");
+			}
+			else{
+				// change "radio" according to the div container id in your page !!!!
+				swfobject.embedSWF(swf, "ddd", "1", "1", "10.0.0", false, flashvars, params, attributes);
+			}
+
+			toLog(thisMovie());
+			
+			/*
+			* GUI
+			*/
+			/*
+			$('#timeline').css({
+				'width': $(window).width()-20+"px"
+			});
+			*/
+			
+		}
+		function thisMovie() {
+			if (navigator.appName.indexOf("Microsoft") != -1){
+					return window[MOVIE_NAME];
+			} 
+			else {
+					return document.getElementById(MOVIE_NAME);
+			}
+		}
+		
+		/*
+		* Player functions
+		*/
+
+		/*
+		* add a sound to the player timeline
+		*/
+		function addSound(surl){
+			try{
+				thisMovie().add(surl);
+				var sound = {
+					id: null,
+					label: "", 
+					url: surl,
+					start: 0,
+					volume: 1,
+					mute: false,
+					loaded: false,
+					samples: null
+				};
+				soundsStore.push(sound);
+				if(readyInterval == -1){
+					readyInterval = setInterval("checkReady()",500);
+				}
+			} catch(e){
+				toLog(e);
+			}
+		}
+		
+		function setSoundVolume(id, volume){
+			thisMovie().setSoundVolume(id, volume);
+		}
+		function setSoundStart(id, secs){
+			thisMovie().setSoundStart(id, secs);
+		}
+		
+		function play(){
+			thisMovie().play();
+			positionInterval = setInterval("showPosition()",5);
+		}
+		function pause(){
+			pausePosition = thisMovie().position();
+			toLog("pos "+pausePosition);
+			thisMovie().pause();
+			clearInterval(positionInterval);
+		}
+		function stop(){
+			pausePosition = 0;
+			thisMovie().stop();
+			clearInterval(positionInterval);
+			$('#display').html(thisMovie().getStart()+" s");
+			
+			showPosition();
+		}
+		function setStart(secs){
+			thisMovie().setStart(secs);
+		}
+		function setEnd(secs){
+			thisMovie().setEnd(secs);
+		}
+		/*
+		* END Player functions
+		*/
+		
+		/*
+		* checks if all sounds have been loaded from the flash player
+		*/
+		function checkReady(){
+			if(thisMovie().ready()){
+				clearInterval(readyInterval);
+				readyInterval = -1;
+				
+				for(var i=0; i<soundsStore.length; i++){
+					var id = thisMovie().getID( soundsStore[i].url );
+					toLog("ID: "+id);
+					soundsStore[i].id = id;
+					if(soundsStore[i].samples == null){
+						soundsStore[i].length = thisMovie().getSoundLength( id );
+						soundsStore[i].start = thisMovie().getSoundStart( id );
+						toLog("ms "+soundsStore[i].length );
+						var numSamples = soundsStore[i].length  / 1000 * 44100;
+						toLog("NUM SAMPLES "+numSamples);
+						var step = Math.round( numSamples / (numSamples/44100 * SCALE_FACTOR) );
+						toLog("STEP "+step);
+						soundsStore[i].samples = thisMovie().getSamples(id, step);
+					}
+					if( $('#canvas'+id).size() == 0 ){
+						addWaveform(soundsStore[i]);
+					}
+				}
+				
+				// GUI
+				$.each($('[control]'), function(i, val){
+					$(val).removeAttr('disabled');
+				});
+				
+				$('canvas').each(function(i, el){
+					if($(el).width() > TIMELINE_WIDTH){
+						TIMELINE_WIDTH = $(el).width();
+					}
+				});
+				toLog("Width: "+TIMELINE_WIDTH);
+				$('#timeline').css({
+					'width': TIMELINE_WIDTH
+				});
+				$('.scroll-pane').css({
+					'width': ( $(window).width() - $('#tracks').width() - 10) +"px"
+				});
+				
+				makeSlider();
+				
+			}
+			else{
+				toLog('not ready');
+				$('[control]').attr('disabled','true');
+			}
+		}
+		
+		// one second of audio (44100 samples) is 40px (SCALE_FACTOR pixels)
+		SCALE_FACTOR = 40;
+		CANVAS_H = 100;
+		
+		
+		/*
+		* GUI Function: draws a waveform into a canvas
+		*/
+		function addWaveform(soundEl){
+			
+			if( $('#timelineCursor').size() == 0 ){
+				$('<div>').attr('id','timelineCursor').css({
+					'width': '1px',
+					'position': 'absolute',
+					'z-index': '2',
+					'left' :'0',
+					'background-color': 'white'
+				})
+				.appendTo( $('#timeline') );
+			}
+			
+			toLog("SAMPLES NUM "+soundEl.samples.length);
+			toLog("sound length "+soundEl.length);
+			CANVAS_W = soundEl.length / 1000 * SCALE_FACTOR;
+			//var step = Math.round( soundEl.samples.length / (soundEl.samples.length/44100 * SCALE_FACTOR) );
+			//toLog("step "+step);
+			
+			toLog("W "+CANVAS_W);
+			
+			toLog("drawing waveform sound "+soundEl.id);
+			toLog("length "+soundEl.samples.length);
+			toLog("START SECONDS "+soundEl.start);
+			$('<canvas>')
+			.attr({
+				'id': 'canvas'+soundEl.id,
+				'width': CANVAS_W,
+				'height': CANVAS_H,
+			}).
+			css({
+				'border':'1px solid black',
+				'margin-left': soundEl.start*SCALE_FACTOR+"px"
+			})
+			.addClass('scroll-content-item')
+			.appendTo('#timeline');
+			
+			
+			
+			var canvas = document.getElementById("canvas"+soundEl.id);
+      if (canvas.getContext) {
+        var ctx = canvas.getContext("2d");
+
+				var vC = (CANVAS_H)/2;
+				var w = CANVAS_W;
+				var h = CANVAS_H;
+
+				var grad = ctx.createLinearGradient(0, 0, 0, h);
+				grad.addColorStop(0, '#8A9ABC');
+				grad.addColorStop(1, '#7282A6');
+				ctx.fillStyle = grad;
+				
+				//ctx.fillStyle = '#8898BC'; 
+				ctx.fillRect(0, 0, w, h);
+				ctx.fill();
+				
+				
+				ctx.fillStyle = '#4A5269';
+				ctx.strokeStyle = "rgba(74, 82, 105, 0.5)";
+				ctx.beginPath(); 
+				ctx.moveTo(0,vC+0.1);  
+				ctx.lineTo(w,vC+0.1); 
+				ctx.stroke();
+				
+				ctx.beginPath();  
+				ctx.moveTo(0,vC);  
+				
+				for(var i = 0; i < soundEl.samples.length; i++){
+					ctx.lineTo(i*w/soundEl.samples.length, vC - soundEl.samples[i]*h);
+				}
+				ctx.fill();
+				
+				ctx.beginPath();  
+				ctx.moveTo(0,vC);  
+				for(var i = 0; i < soundEl.samples.length; i++){
+					ctx.lineTo(i*w/soundEl.samples.length, vC + soundEl.samples[i]*h);
+				}
+				
+				ctx.fill();
+      }
+      
+      var oImgPNG = Canvas2Image.saveAsPNG(canvas, true); 
+      
+      $(canvas).remove();
+      
+      $(oImgPNG)
+      .attr('width',CANVAS_W)
+      .attr('height',CANVAS_H)
+      .addClass('waveform')
+      .css({
+				'border':'1px solid black',
+				'margin-left': soundEl.start*SCALE_FACTOR+"px"
+			})
+
+      $('#timeline').append( $(oImgPNG) );
+      
+      
+      $('<br>').appendTo('#timeline');
+      
+      // Track header
+      var trackHeader = $('<div>')
+      .addClass('track-header')
+      .css({
+      	'height': CANVAS_H+"px"
+      })
+      .html("<div class='track-label' id='track"+soundEl.id+"'>Track "+soundEl.id+"</div>")
+      .appendTo('#tracks');
+      
+      $('#track'+soundEl.id).editable(function(value, settings){ 
+      		var id = soundEl.id;
+      		soundsStore[id].label = value;
+      		$(this).html(value);
+				}, {
+				tooltip: 'Click to edit...',
+				height: '20px',
+				style: 'inherit'
+			});
+		}
+		
+		/*
+		* GUI Function: redraws all waveforms canvas
+		*/
+		function redrawWaveform(){
+			$('#timeline').html("");
+			for(var i=0; i<soundsStore.length; i++){
+				addWaveform(soundsStore[i]);
+			}
+		}
+		
+		/*
+		* GUI Function: timeline slider
+		*/ 
+		function makeSlider(){
+			
+			//build slider
+			scrollbar = $(".scroll-bar").slider({
+				slide:function(e, ui){
+					toLog($('.scroll-content').width() +" > "+ $('.scroll-pane').width());
+					if( $('.scroll-content').width() > $('.scroll-pane').width() ){ $('.scroll-content').css('margin-left', Math.round( ui.value / 100 * ( $('.scroll-pane').width() - $('.scroll-content').width() )) + 'px'); }
+					else { $('.scroll-content').css('margin-left', 0); }
+					
+					CURSOR_POSITION_OFFSET = parseInt( $('.scroll-content').css('margin-left').replace("-","").replace("px","") );
+					toLog(CURSOR_POSITION_OFFSET);
+					
+					showPosition();
+					
+				}
+			});	
+		};	
+		
+		/*
+		* GUI Function: shows the timeline position
+		*/
+		function showPosition(){
+			
+			$('#display').html( thisMovie().position() + " s");
+			
+			var posLeft = ( Math.round((thisMovie().position()) * SCALE_FACTOR) - (CURSOR_POSITION_OFFSET) + $('#tracks').width());
+			$('#timelineCursor').css({
+				'height': $('#timeline').height(),
+				'left': posLeft+"px"
+			});
+			
+			if(posLeft < $('#tracks').width() ){
+				$('#timelineCursor').hide();
+			}
+			else{
+				$('#timelineCursor').show();
+			}
+		}
+		
+		/*
+		* Temp functions: add some sounds
+		*/
+		function handleBrowser(string){
+			if(navigator.userAgent.toLowerCase().indexOf("chrome") != -1 ){
+				//return string.replace("localhost","10.80.6.27");
+				return string.replace("localhost","10.80.6.27");
+			}
+			else{
+				return string;
+			}
+		}
+		
+		var DEBUG = true;
+		function toLog(str){
+			if(DEBUG){
+				if(typeof(console)!='undefined'){
+					var d = new Date();
+					console.log("["+d.toLocaleTimeString()+" "+d.getMilliseconds()+"] "+str);
+				}
+			}
+		}
+
+
+		function addSomething(){
+			/*
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/acoustic 1_bip.mp3") );
+			
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/acoustic 2_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Basso Dry_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/drum_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/drum_bip.mp3")), 1.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/guitar_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/guitar_rhythm_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Solo_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Tambourine 09_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/Tambourine 09_bip.mp3")), 0.6);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/voce_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/voce_bip.mp3")), 0.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox2_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox2_bip.mp3")), 0.2);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox3_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox3_bip.mp3")), 0.2);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox4_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox4_bip.mp3")), 0.2);
+			*/
+			
+			
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3")),3);
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3")), 0.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/click.mp3") );
+				
+				//addSound( handleBrowser("http://media.freesound.org/data/9/previews/9876__Heigh_hoo__car_door_closed_preview.mp3") );
+				//setSoundStart(thisMovie().getID( handleBrowser("http://media.freesound.org/data/9/previews/9876__Heigh_hoo__car_door_closed_preview.mp3")), 2.5);
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/door.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/door.mp3")), 2.5);
+			
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/aerea.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/aerea.mp3")), 0);
+			
+				setStart(2);
+				setEnd(8.3);
+		}
+	</script>
+	
+</head>
+<body onLoad="init();">
+
+	<!--object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"
+					 id="AudioEngineRunner" width="20" height="20"
+					 codebase="http://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab">
+			 <param name="movie" value="AudioEngineRunner.swf" />
+			 <param name="quality" value="high" />
+			 <param name="bgcolor" value="#869ca7" />
+			 <param name="allowScriptAccess" value="always" />
+			 <embed src="AudioEngineRunner.swf" quality="high" bgcolor="#869ca7"
+					 width="20" height="20" name="AudioEngineRunner" align="middle"
+					 play="false" loop="false" quality="high" allowScriptAccess="always"
+					 type="application/x-shockwave-flash"
+					 pluginspage="http://www.macromedia.com/go/getflashplayer">
+			 </embed>
+	 </object-->
+	 
+	 <div id="display"></div>
+	 <button href="#" disabled="true" control="play" onclick="play(); return false;">Play</button>
+	 <button href="#" disabled="true" control="pause" onclick="pause(); return false;">Pause</button>
+	 <button href="#" disabled="true" control="stop" onclick="stop(); return false;">Stop</button><br>
+	 <button href="#" control="addSomething" onclick="addSomething(); return false;">Add some sounds</button><br>
+	 
+	 <label>Temporal Zoom</label>
+	 <button href="#" control="temporalZoomPlus" onclick="if(SCALE_FACTOR > 10){SCALE_FACTOR -= 10;} redrawWaveform(); makeSlider(); return false;">-</button>
+	 <button href="#" control="temporalZoomMinus" onclick="SCALE_FACTOR += 10; redrawWaveform(); makeSlider(); return false;">+</button><br>
+	 
+	 <label>Vertical Zoom</label>
+	 <button href="#" control="verticalZoomPlus" onclick="if(CANVAS_H > 10){CANVAS_H -= 10;} redrawWaveform(); return false;">-</button>
+	 <button href="#" control="verticalZoomMinus" onclick="CANVAS_H += 10; redrawWaveform(); return false;">+</button><br>
+	 
+	  <div id="ddd"></div>
+	 
+	  <ul id="timeline-container" style="display:table;list-style:none outside none;padding:0;">
+	  	<li id="tracks" style="clear:both;display:table-cell;position:relative;vertical-align: top; padding-top: 1px">
+				<!-- tracks list -->
+				
+	  	</li>
+	  	<li style="clear:both;display:table-cell;position:relative;">
+				<!-- audio timeline -->
+				<div class="scroll-pane" style="overflow: hidden;">
+	
+					<div id="timeline" class="scroll-content" style="padding: 0px; background-color: #5B5B5B"></div>
+			 
+					<div class="scroll-bar-wrap ui-widget-content ui-corner-bottom">
+						<div class="scroll-bar"></div>
+					</div>
+				</div>
+		  </li>
+		  
+	  </ul>
+
+</body>
+</html>

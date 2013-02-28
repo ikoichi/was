@@ -1,0 +1,1853 @@
+<html>
+<head>
+	<title>Web-based Collaborative Sequencer</title>
+	
+	<link href="js/jquery-ui-1.8.custom/css/ui-darkness/jquery-ui-1.8.custom.css" rel="stylesheet" type="text/css"/>
+	<link rel="stylesheet" href="style.css" type="text/css" />
+	<script type="text/javascript" src="js/jquery-1.4.min.js"></script>
+	<script type="text/javascript" src="js/jquery-ui-1.8.custom/js/jquery-ui-1.8.custom.min.js"></script>
+	<script type="text/javascript" src="js/jquery.jeditable.mini.js"></script>
+	<script type="text/javascript" src="js/jquery.json-2.2.min.js"></script>
+	<script type="text/javascript" src="js/jquery.rightClick.js"></script>
+	<script type="text/javascript" src="js/swfobject.js"></script>
+	
+	
+	<script type="text/javascript">
+	
+		var PROJECT_ID = null;
+	
+		var MOVIE_NAME = "AudioEngineRunner";
+		
+		var TIMELINE_WIDTH = 0;
+		var CURSOR_POSITION_OFFSET = 0;
+		
+		var soundsStore = new Array();
+		
+		var positionInterval;
+		var readyInterval = -1;
+		
+		var pausePosition = 0;
+		
+		var RIGHT_CLICK_LISTENER = false;
+		
+		var player = {
+			state: 'stopped',
+			bpm: 120,
+			tempo1: 4,
+			tempo2: 4,
+			keyPressed: false,
+			click: false,
+			loop: false,
+			loopEnd: -1,
+		}
+
+		var colorSet = {
+			0: { // blue
+				first:  '#8A9ABC',
+				second: '#7282A6',
+				wave:   '#4A5269'
+			},
+			1: { // violet
+				first:  '#B08BB6',
+				second: '#9D73A5',
+				wave:   '#624966'
+			},
+			2: { // green
+				first:  '#81BB89',
+				second: '#6AA672',
+				wave:   '#436648'
+			},
+			3: { // dark green
+				first:  '#83BC94',
+				second: '#6BA47C',
+				wave:   '#425E4A'
+			},
+			4: { // yellow
+				first:  '#EDC856',
+				second: '#D5B13E',
+				wave:   '#716026'
+			},
+			5: { // orange
+				first:  '#EFA254',
+				second: '#D78A3C',
+				wave:   '#724D25'
+			},
+			6: { // dark red
+				first:  '#EE7C53',
+				second: '#D7643D',
+				wave:   '#723925'
+			},
+			7: { // violet
+				first:  '#9185BA',
+				second: '#7D71A6',
+				wave:   '#443E58'
+			},
+			8: { // dark red
+				first:  '#EE7C53',
+				second: '#D7643D',
+				wave:   '#723925'
+			},
+			9: { // blue water
+				first:  '#16778F',
+				second: '#006279',
+				wave:   '#7AAAB6'
+			}
+		}
+		
+		function init(){
+		
+			var swf = 'AudioEngineRunner.swf';  
+			var flashvars = {};
+			var params = {
+				allowScriptAccess: 'always',
+				wmode: 'transparent'
+			};
+			var attributes = {
+				id : 'AudioEngineRunner'
+			};
+			var version = swfobject.getFlashPlayerVersion();
+			toLog("Flash Player Version: "+version.major+"."+version.major+"."+version.release);
+			var requestedVersion = 10;
+			if (version.major < requestedVersion) {
+				toLog("You need at least Adobe Flash Player version 9, please upgrade your Flash plugin");
+				alert("You need at least Adobe Flash Player version 9, please upgrade your Flash plugin");
+			}
+			else{
+				// change "radio" according to the div container id in your page !!!!
+				swfobject.embedSWF(swf, "ddd", "1", "1", "10.0.0", false, flashvars, params, attributes);
+			}
+
+			toLog(thisMovie());
+			
+			/*
+			* Key controls
+			*/
+			$('html').bind('keydown', function(e) {
+				var code = (e.keyCode ? e.keyCode : e.which);
+				toLog(code);
+				if(code == 18){ // Alt on Mac
+					player.keyPressed = true;
+				}
+			});
+			$('html').bind('keyup', function(e) {
+				var code = (e.keyCode ? e.keyCode : e.which);
+
+				if( e.target.nodeName.toLowerCase() != 'input' ){
+					if(code == 18){
+						player.keyPressed = false;						
+					}
+					else if(code == 83){
+						if( player.state == 'stopped' && soundsStore.length > 0){
+							play();
+						}
+						else if(player.state == 'paused' && soundsStore.length > 0){
+							play();
+						}
+						else if(player.state == 'playing'){
+							pause();
+						}
+					}
+					else if(code == 68){
+						stop();
+					}
+					else if(code == 65){
+						reset();
+					}
+				}
+			});
+			
+			// click on timeline
+			$('#cursor-timeline').mousedown(function(e){
+				if(!player.keyPressed){
+					if( $('#timelineCursor').size() > 0 ){
+						var x = e.pageX - this.offsetLeft;
+						var y = e.pageY - this.offsetTop;
+						
+						var mouseX = x;
+						var elWidth = $(this).width();
+						
+						$('#timelineCursor').show();
+						$('#timelineCursor').css({
+							'left': mouseX + this.offsetLeft+"px"
+						});
+						//var posLeft = ( Math.round((thisMovie().position()) * SCALE_FACTOR)
+						var secs = (mouseX + this.offsetLeft - $('#tracks').width() + ( parseInt( $('#cursor-timeline').css('margin-left').replace('-','').replace('px','') ) ) ) / SCALE_FACTOR;
+						toLog("seconds "+secs);
+						setStart( secs );
+						
+						// stop actions
+						pausePosition = 0;
+						if(player.state == 'playing'){
+							thisMovie().stop();
+							thisMovie().play();
+						}
+						else if(player.state != 'stopped'){
+							thisMovie().stop();
+							player.state = 'stopped';
+						}
+						
+						$('#timeline-ticker-canvas').css({
+							'left':( mouseX - 100 - 7 )+"px"
+						});
+						
+						showPosition(true);
+					}
+				}
+				else if(player.keyPressed){
+					player.loop = true;
+					toLog($('#loopEndCursor').size());
+					if( $('#loopEndCursor').size() == 0 ){
+						$('<div>').attr('id','loopEndCursor').css({
+							'width': '1px',
+							'position': 'absolute',
+							'z-index': '2',
+							'left' :'0',
+							'background-color': 'red',
+							'height': $('#timeline').height(),
+						})
+						.insertAfter( $('#timelineCursor') );
+					}
+					
+					$('#loopEndCursor').show();
+					
+					var x = e.pageX - this.offsetLeft;
+					var y = e.pageY - this.offsetTop;
+					
+					var mouseX = x;
+					var elWidth = $(this).width();
+					
+					var secs = (mouseX + this.offsetLeft - $('#tracks').width() + ( parseInt( $('#cursor-timeline').css('margin-left').replace('-','').replace('px','') ) ) ) / SCALE_FACTOR;
+					toLog("loop end "+secs );
+					setEnd( secs + 0.1 );
+					
+					$('#loopEndCursor').css({
+						'left': mouseX + this.offsetLeft+"px"
+					});
+						
+					// drawing the loop end bar ticker
+					if( $('#loop-end-ticker-canvas').size() > 0 ){
+						$('#loop-end-ticker-canvas').remove();
+					}	
+					
+					$('<canvas>')
+					.attr({
+						'id': 'loop-end-ticker-canvas',
+						'width': '16',
+						'height': '15'
+					})
+					.css({
+						'-moz-box-shadow':'none',
+						'-webkit-box-shadow':'none',
+						'position':'absolute',
+						'z-index': '4',
+						'left': ( mouseX + this.offsetLeft -7 - $('#tracks').width() )+"px"
+					})
+					.appendTo('#cursor-timeline');
+					
+					var canvas = document.getElementById('loop-end-ticker-canvas');
+					if (canvas.getContext) {
+						var ctx = canvas.getContext("2d");
+						
+						var grad = ctx.createLinearGradient(0, 0, 0, 15);
+						grad.addColorStop(0, '#B50000');
+						grad.addColorStop(1, '#D40000');
+						ctx.fillStyle = grad;
+						
+						ctx.beginPath();
+						ctx.moveTo(0,7);
+						ctx.lineTo(15,7);
+						ctx.lineTo(7,15);
+						ctx.lineTo(0,7);
+						ctx.fill();
+					}
+					
+					// Loop button
+					$('[control=loop]')
+					.removeClass('player-button')
+					.addClass('player-button-active')
+					.click(function(){
+						removeLoop();
+					})
+					
+				}
+      });
+			
+			/*
+			* GUI
+			*/
+			// making bmp and tempo textbox editable
+			$('#display-click-text').editable(function(value, settings){ 
+					toLog(value);
+					var val = $.trim(value);
+					if( !isNaN(val) ){
+						if(val >= 40 && val <= 208){
+							player.bpm = val;
+							thisMovie().setBeat(player.bpm);
+							if(!player.click){
+								thisMovie().removeBeat();
+							}
+							if(soundsStore.length > 0){
+								drawTimelineGrid();
+							}
+						}
+						else{
+							val = player.bpm;
+						}
+					}
+					else{
+						val = player.bpm;
+					}
+					$(this).html(val);
+				}, {
+				tooltip: 'Bpm',
+				type: 'text',
+				height: '20px',
+				width: '30px'
+			});
+			
+			$('#display-tempo1').editable(function(value, settings){ 
+					toLog(value);
+					var val = $.trim(value);
+					if( !isNaN(val) ){
+						if(val >= 2 && val <= 10){
+							player.tempo1 = val;
+							if(soundsStore.length > 0){
+								drawTimelineGrid();
+							}
+						}
+						else{
+							val = player.tempo1;
+						}
+					}
+					else{
+						val = player.tempo1;
+					}
+					$(this).html(val);
+				}, {
+				tooltip: 'Bpm',
+				type: 'text',
+				height: '20px',
+				width: '15px'
+			});
+			
+			// zoom sliders
+			$("#temporal-zoom-slider")
+			.css({
+				'height': '2px'
+			})
+			.slider({ 
+				step: 10,  
+				value: SCALE_FACTOR,
+				min: 10,
+				max: 180,
+				stop: function(event, ui) { 
+					temporalZoom(ui.value);
+					toLog('temporal zoom value: '+ui.value);
+				}
+			});
+			$("#temporal-zoom-slider").children().
+			css({
+				'height':'0.5em',
+				'width':'0.5em',
+				'cursor':'pointer',
+				'margin-left':'-0.3em',
+			});
+			
+			$("#vertical-zoom-slider")
+			.css({
+				'height': '2px'
+			})
+			.slider({ 
+				step: 10,  
+				value: CANVAS_H,
+				min: 10,
+				max: 200,
+				stop: function(event, ui) { 
+					verticalZoom(ui.value);
+					toLog('vertical zoom value: '+ui.value);
+				}
+			});
+			$("#vertical-zoom-slider").children().
+			css({
+				'height':'0.5em',
+				'width':'0.5em',
+				'cursor':'pointer',
+				'margin-left':'-0.3em',
+			});
+			
+			/*
+			$('#timeline').css({
+				'width': $(window).width()-20+"px"
+			});
+			*/
+
+			// looking for a project id to load
+			var pageUrl = window.location.href;
+			if(pageUrl.indexOf('#project/') != -1){
+				projectId = pageUrl.split('#project/')[1];
+				projectId = projectId.replace(/\//g,"");
+				loadComposition( projectId );
+			}
+			
+		}
+		function thisMovie() {
+			if (navigator.appName.indexOf("Microsoft") != -1){
+					return window[MOVIE_NAME];
+			} 
+			else {
+					return document.getElementById(MOVIE_NAME);
+			}
+		}
+		
+		/*
+		* Player functions
+		*/
+
+		/*
+		* add a sound to the player timeline
+		* intoStack: if false, the sound is not added to the soundsStore
+		*/
+		function addSound(surl, intoStack){
+			try{
+				thisMovie().add(surl);
+				var sound = {
+					id: soundsStore.length,
+					label: "", 
+					url: surl,
+					start: 0,
+					volume: 1,
+					mute: false,
+					solo: false,
+					loaded: false,
+					samples: null,
+					color: 0
+				};
+				if(intoStack != false){
+					soundsStore.push(sound);
+				}
+				if(readyInterval == -1){
+					readyInterval = setInterval("checkReady()",500);
+				}
+			} catch(e){
+				toLog(e);
+			}
+		}
+		
+		/*
+		* remove a sound from the Flash Audio Engine
+		*/
+		function removeSound(surl){
+			try{
+				// removing sound from the Flash Audio Engine
+				thisMovie().remove(surl);
+				
+				// removing element from the sounds stack
+				var index = -1
+				for(var i=0; i < soundsStore.length; i++){
+					if(soundsStore[i].url == surl){
+						index = i;
+						
+						// GUI: remove track header
+						$('#track'+soundsStore[i].id).parent().parent().remove();
+						
+						break;
+					}
+				}
+				if(index != -1){
+					soundsStore.splice(index,1);
+					
+					// re-assign sounds IDs
+					for(var i=0; i < soundsStore.length; i++){
+						soundsStore[i].id = i;
+					}
+					
+					// GUI: removing all track headers and redrawing everything in order to set the functions to new IDs
+					$('.track-header').remove();
+					redrawWaveform();
+					
+				}
+				else{
+					toLog('removeSound: File not found into the JavaScript soundsStore array');
+				}
+				
+			} catch(e){
+				toLog(e);
+			}
+		}
+		
+		function setSoundVolume(id, volume){
+			thisMovie().setSoundVolume(id, volume);
+			soundsStore[id].volume = volume;
+		}
+		function setSoundStart(id, secs){
+			thisMovie().setSoundStart(id, secs);
+			soundsStore[id].start = secs;
+		}
+		
+		function play(){
+			player.state = 'playing';
+			
+			thisMovie().play();
+			
+			// GUI: player buttons
+			$('[control=play]').hide();
+			$('[control=pause]').show();
+			removeListeners();
+			//positionInterval = setInterval("showPosition()",1);
+		}
+		function pause(){
+			
+			/*
+			thisMovie().pause();
+			pausePosition = thisMovie().position();
+			toLog("pos "+pausePosition);
+			
+			showPosition(true);
+			*/
+			if(player.state == 'playing'){
+				player.state = 'paused';
+				thisMovie().pause();
+				setStart( thisMovie().position() );
+				stop();
+				showPosition();
+				// GUI: player buttons
+				$('[control=play]').show();
+				$('[control=pause]').hide();
+				addListeners();
+			}
+		}
+		function stop(){
+			pausePosition = 0;
+			if(player.state != 'stopped'){
+				thisMovie().stop();
+			}
+			clearInterval(positionInterval);
+			//$('#display').html(thisMovie().getStart()+" s");
+			if(player.state == 'playing'){
+				showPosition(true);
+			}
+			
+			// GUI: player buttons
+			$('[control=play]').show();
+			$('[control=pause]').hide();
+			addListeners();
+			player.state = 'stopped';
+		}
+		function reset(){
+			setStart(0);
+			if(player.state != 'stopped'){
+				thisMovie().stop();
+			}
+			showPosition(true);
+			
+			player.state = 'stopped';
+			
+			// GUI: player buttons
+			$('[control=play]').show();
+			$('[control=pause]').hide();
+			
+			addListeners();
+		}
+		function openSound(){
+			var val = prompt("Insert the URL of a sound file","");
+			
+			
+			if(val != null){
+				var res = val.match(/(.*?)\.(mp3|wav).*/);
+				if(res != null ){
+					toLog(res);
+					addSound(res[0]);
+					if( $('#composition-load-link').size() > 0 ){ $('#composition-load-link').remove() }
+				}
+				else{
+					alert('This is not an audio file');
+				}
+			}
+			
+		}
+		
+		function activateClick(){
+		
+			thisMovie().setBeat( player.bpm );
+			player.click = true;
+		
+			// Click button
+			$('[control=click]')
+			.addClass('player-button-active')
+			.click(function(){
+				$(this).unbind();
+				deactivateClick();
+			})
+		}
+		function deactivateClick(){
+		
+			thisMovie().removeBeat();
+			player.click = false;
+		
+			// Click button
+			$('[control=click]')
+			.removeClass('player-button-active')
+			.click(function(){
+				$(this).unbind();
+				activateClick();
+			})
+		}
+		
+		function setStart(secs){
+			thisMovie().setStart(secs);
+		}
+		function setEnd(secs){
+			thisMovie().setEnd(secs);
+			player.loopEnd = secs;
+		}
+		/*
+		* END Player functions
+		*/
+		
+		/*
+		* checks if all sounds have been loaded from the flash player
+		*/
+		function checkReady(){
+			if(thisMovie().ready()){
+				clearInterval(readyInterval);
+				readyInterval = -1;
+				
+				for(var i=0; i<soundsStore.length; i++){
+					var id = thisMovie().getID( soundsStore[i].url );
+					toLog("ID: "+id);
+					soundsStore[i].id = id;
+					if(soundsStore[i].samples == null){
+						soundsStore[i].length = thisMovie().getSoundLength( id );
+						soundsStore[i].start = thisMovie().getSoundStart( id );
+						toLog("ms "+soundsStore[i].length );
+						var numSamples = soundsStore[i].length  / 1000 * 44100;
+						toLog("NUM SAMPLES "+numSamples);
+						var step = Math.round( numSamples / (numSamples/44100 * SCALE_FACTOR) );
+						toLog("STEP "+step);
+						soundsStore[i].samples = thisMovie().getSamples(id, step);
+					}
+					if( $('#canvas'+id).size() == 0 ){
+						addWaveform(soundsStore[i]);
+					}
+				}
+				
+				makeSlider();
+				
+				$('#spot-container').fadeOut();
+				$('#alert').fadeOut();
+				
+			}
+			else{
+				toLog('not ready');
+				$('[control]').attr('disabled','true');
+			}
+		}
+		
+		// one second of audio (44100 samples) is 40px (SCALE_FACTOR pixels)
+		SCALE_FACTOR = 40;
+		CANVAS_H = 50;
+		
+		
+		/*
+		* GUI Function: draws a waveform into a canvas
+		*/
+		function addWaveform(soundEl){
+		
+			addListeners();
+			
+			if( $('#timelineCursor').size() == 0 ){
+				$('<div>').attr('id','timelineCursor').css({
+					'width': '1px',
+					'position': 'absolute',
+					'z-index': '2',
+					'left' :'0',
+					'background-color': 'white'
+				})
+				.appendTo( $('#timeline') );
+				
+				// drawing the timeline bar ticker
+				if( $('#timeline-ticker-canvas').size() > 0 ){
+					$('#timeline-ticker-canvas').remove();
+				}
+				$('<canvas>')
+				.attr({
+					'id': 'timeline-ticker-canvas',
+					'width': '16',
+					'height': '15'
+				})
+				.css({
+					'-moz-box-shadow':'none',
+					'-webkit-box-shadow':'none',
+					'position':'absolute',
+					'z-index': '3'
+				})
+				.appendTo('#cursor-timeline')
+				.hide()
+				.draggable({ 
+					axis: 'x',
+					containment: '#cursor-timeline', 
+					scroll: false,
+					drag: function(e, ui) {  
+						var x = e.pageX - this.offsetLeft;
+						var y = e.pageY - this.offsetTop;
+						
+						var mouseX = x;
+						var elWidth = $(this).width();
+						
+						var left = mouseX + this.offsetLeft;
+						
+						$('#timelineCursor').show();
+						$('#timelineCursor').css({
+							'left': left+"px"
+						});
+						
+						if(left < $('#tracks').width() || left > $('#timeline-container').width() ){
+							$('#timelineCursor').hide();
+						}
+						else{
+							$('#timelineCursor').show();
+						}
+						
+					},
+					stop: function(e,ui){
+							if( $('#timelineCursor').size() > 0 ){
+								var x = e.pageX - this.offsetLeft;
+								var y = e.pageY - this.offsetTop;
+								
+								var mouseX = x;
+								var elWidth = $(this).width();
+								
+								$('#timelineCursor').show();
+								$('#timelineCursor').css({
+									'left': mouseX + this.offsetLeft+"px"
+								});
+								//var posLeft = ( Math.round((thisMovie().position()) * SCALE_FACTOR)
+								var secs = (mouseX + this.offsetLeft - $('#tracks').width() + ( parseInt( $('#cursor-timeline').css('margin-left').replace('-','').replace('px','') ) ) ) / SCALE_FACTOR;
+								toLog("seconds "+secs);
+								setStart( secs );
+								
+								// stop actions
+								pausePosition = 0;
+								if(player.state == 'playing'){
+									thisMovie().stop();
+									thisMovie().play();
+								}
+								else if(player.state != 'stopped'){
+									thisMovie().stop();
+									player.state = 'stopped';
+								}
+								
+								$('#timeline-ticker-canvas').css({
+									'left':( mouseX - 100 - 7 )+"px"
+								});
+								
+								showPosition(true);
+							}
+					}
+				});
+				
+				var canvas = document.getElementById('timeline-ticker-canvas');
+				if (canvas.getContext) {
+        	var ctx = canvas.getContext("2d");
+        	
+        	var grad = ctx.createLinearGradient(0, 0, 0, 15);
+					grad.addColorStop(0, '#3D3D3D');
+					grad.addColorStop(1, '#fff');
+					ctx.fillStyle = grad;
+        	
+        	ctx.beginPath();
+					ctx.moveTo(0,7);
+					ctx.lineTo(15,7);
+					ctx.lineTo(7,15);
+					ctx.lineTo(0,7);
+					ctx.fill();
+        }
+			}
+			
+			toLog("SAMPLES NUM "+soundEl.samples.length);
+			toLog("sound length "+soundEl.length);
+			CANVAS_W = soundEl.length / 1000 * SCALE_FACTOR;
+			//var step = Math.round( soundEl.samples.length / (soundEl.samples.length/44100 * SCALE_FACTOR) );
+			//toLog("step "+step);
+			
+			toLog("W "+CANVAS_W);
+			
+			toLog("drawing waveform sound "+soundEl.id);
+			toLog("length "+soundEl.samples.length);
+			toLog("START SECONDS "+soundEl.start);
+			
+			$('<div>')
+			.attr({
+				'id': 'canvas-container-'+soundEl.id
+			})
+			.css({
+				'width': '100%'
+			})
+			.appendTo('#timeline');
+			
+			$('<canvas>')
+			.attr({
+				'id': 'canvas'+soundEl.id,
+				'width': CANVAS_W,
+				'height': CANVAS_H,
+			}).
+			css({
+				'border':'1px solid black',
+				'margin-left': soundEl.start*SCALE_FACTOR+"px"
+			})
+			.addClass('scroll-content-item')
+			.appendTo('#canvas-container-'+soundEl.id)
+			.draggable({ 
+				axis: 'x',
+				containment: '#canvas-container-'+soundEl.id, 
+				scroll: false,
+				start: function(event, ui){
+					if(player.state == 'playing'){
+						pause();
+					}
+					toLog('drag star');
+				},
+				stop: function(event, ui){
+					var secs = ( $(event.target).offset().left - $('#tracks').width() + ( parseInt( $('#cursor-timeline').css('margin-left').replace('-','').replace('px','') ) )) / SCALE_FACTOR;
+					
+					toLog(secs);
+					var id = $(event.target).attr('id').replace('canvas','');
+					setSoundStart(id, secs);
+				}
+			});
+			
+			var canvas = document.getElementById("canvas"+soundEl.id);
+      if (canvas.getContext) {
+        var ctx = canvas.getContext("2d");
+
+				var vC = CANVAS_H/2;
+				var w = CANVAS_W;
+				var h = CANVAS_H;
+
+				var grad = ctx.createLinearGradient(0, 0, 0, h);
+				grad.addColorStop(0, colorSet[soundEl.color].first);
+				grad.addColorStop(1, colorSet[soundEl.color].second);
+				ctx.fillStyle = grad;
+				
+				//ctx.fillStyle = '#8898BC'; 
+				ctx.fillRect(0, 0, w, h);
+				ctx.fill();
+				
+				
+				ctx.fillStyle = colorSet[soundEl.color].wave;
+				ctx.strokeStyle = "rgba(74, 82, 105, 0.5)";
+				ctx.beginPath(); 
+				ctx.moveTo(0,vC+0.1);  
+				ctx.lineTo(w,vC+0.1); 
+				ctx.stroke();
+				
+				ctx.beginPath();  
+				ctx.moveTo(0,vC);  
+				
+				for(var i = 0; i < soundEl.samples.length; i++){
+					ctx.lineTo(i*w/soundEl.samples.length, vC - soundEl.samples[i]*h);
+				}
+				ctx.fill();
+				
+				ctx.beginPath();  
+				ctx.moveTo(0,vC);  
+				for(var i = 0; i < soundEl.samples.length; i++){
+					ctx.lineTo(i*w/soundEl.samples.length, vC + soundEl.samples[i]*h);
+				}
+				
+				ctx.fill();
+      }
+      
+      // waveform right click menu
+      $("#canvas"+soundEl.id).rightClick(function(e){
+      	if( $('#right-click-menu').size() != 0 ){
+      		$('#right-click-menu').remove();
+      	}
+      	var x = e.pageX;
+				var y = e.pageY;
+				
+				var el = $(this);
+				
+				if(RIGHT_CLICK_LISTENER){
+					$('<a>')
+					.attr({
+					'id': 'right-click-menu'
+					})
+					.click(function(){
+						var id = el.attr('id').replace("canvas","");
+						removeSound( soundsStore[ parseInt(id) ].url);
+						$(this).remove();
+					})
+					.css({
+						'left': x+"px",
+						'top': y+"px"
+					})
+					.html('Remove track')
+					.appendTo('body');
+				}
+				
+      });
+      
+      // Track header
+      if( $('#track'+soundEl.id).size() == 0 ){
+      	
+      	if(soundEl.label == ""){
+      		var labelText = "Track "+soundEl.id;
+      	}
+      	else{
+      		var labelText = soundEl.label;
+      	}
+      
+				var trackHeader = $('<div>')
+				.addClass('track-header')
+				.css({
+					'height': CANVAS_H+"px"
+				})
+				.html("<div id='track-controls-container"+soundEl.id+"' style='padding-left: 4px; height:60px'><div class='track-label' id='track"+soundEl.id+"'>"+labelText+"</div><div id='slider"+soundEl.id+"' style='width:70px;'></div></div>")
+				.appendTo('#tracks');
+				
+				var muteButton = $('<a>')
+				.attr({
+					'class': 'mute small-button',
+					'id': 'mute'+soundEl.id
+				})
+				.html('M')
+				.click(function(){
+					mute(soundEl.id);
+				});
+				
+				var soloButton = $('<a>')
+				.attr({
+					'class': 'solo small-button',
+					'id': 'solo'+soundEl.id
+				})
+				.html('S')
+				.click(function(){
+					solo(soundEl.id);
+				});
+				
+				// mute and solo
+				$('<div>')
+				.attr({
+					'id': 'soundControl'+soundEl.id,
+					'class': 'sound-control'
+				})
+				.append(muteButton)
+				.append(soloButton)
+				.appendTo('#track-controls-container'+soundEl.id);
+				
+				var controlMarginTop = (CANVAS_H/2) - ($('#track-controls-container'+soundEl.id).height()/2);
+				if(controlMarginTop < 0){ controlMarginTop = 0; }
+				$('#track-controls-container'+soundEl.id)
+				.css({
+					'margin-top': controlMarginTop
+				})
+				
+				if(soundEl.mute){
+					mute(soundEl.id);
+				}
+				if(soundEl.solo){
+					solo(soundEl.id);
+				}
+				
+				// sound control slider
+				$("#slider"+soundEl.id)
+				.css({
+					'height': '2px'
+				})
+				.slider({ 
+					step: 0.1,  
+					value: soundEl.volume,
+					min: 0,
+					max: 2,
+					slide: function(event, ui) { 
+						setSoundVolume(soundEl.id, ui.value);
+						toLog(soundEl.id +" "+ui.value);
+					},
+					stop: function(event, ui) { 
+						setSoundVolume(soundEl.id, ui.value);
+						toLog(soundEl.id +'final value: '+ui.value);
+					}
+
+				});
+				
+				$("#slider"+soundEl.id).children().
+				css({
+					'height':'0.5em',
+					'width':'0.5em',
+					'cursor':'pointer',
+					'margin-left':'-0.3em',
+				})
+				
+				
+				$('#track'+soundEl.id).editable(function(value, settings){ 
+						var id = soundEl.id;
+						soundsStore[id].label = value;
+						$(this).html(value);
+					}, {
+					tooltip: 'Click to edit...',
+					height: '20px',
+					width: '90px'
+				});
+			}
+			else{
+				var controlMarginTop = (CANVAS_H/2) - ($('#track-controls-container'+soundEl.id).height()/2);
+				if(controlMarginTop <0){ controlMarginTop = 0; }
+				$('#track-controls-container'+soundEl.id)
+				.css({
+					'margin-top': controlMarginTop
+				});
+			}
+		}
+		
+		
+		/*
+		* GUI Function: redraws all waveforms canvas
+		*/
+		function redrawWaveform(){
+			$('#timeline').html("");
+			for(var i=0; i<soundsStore.length; i++){
+				addWaveform(soundsStore[i]);
+			}
+		}
+		
+		/*
+		* GUI Function: timeline slider
+		*/ 
+		function makeSlider(){
+			// enabling the play control buttons
+			$.each($('[control]'), function(i, val){
+				$(val).removeAttr('disabled');
+			});
+			
+			// calculating timeline width
+			$('canvas').each(function(i, el){
+				var margin = parseInt( $(el).css('margin-left').replace('px','') );
+				toLog('width canvas '+i+' '+$(el).width());
+				if( TIMELINE_WIDTH < ($(el).width() + margin) ){
+					TIMELINE_WIDTH = $(el).width();
+				}
+			});
+			
+			/*if(TIMELINE_WIDTH < ( $(window).width() - $('#tracks').width() - 20)){
+				toLog('TM1');
+				TIMELINE_WIDTH = ( $(window).width() - $('#tracks').width() - 20) + 1000;
+			}
+			else{
+				toLog('TM2');
+				TIMELINE_WIDTH = ( $(window).width() - $('#tracks').width() - 20) + 1000;
+			}*/
+			
+			// adding 20 seconds of empty space to let the user move also the longest track
+			TIMELINE_WIDTH += 20*SCALE_FACTOR;
+			
+			toLog("Width: "+TIMELINE_WIDTH);
+			$('#timeline').css({
+				'width': TIMELINE_WIDTH
+			});
+			$('#cursor-timeline').css({
+				'width': TIMELINE_WIDTH
+			});
+			$('.scroll-pane').css({
+				'width': ( $(window).width() - $('#tracks').width() - 20) +"px"
+			});
+			
+			
+			//build timeline slider
+			scrollbar = $(".scroll-bar").slider({
+				slide:function(e, ui){
+					toLog($('.scroll-content').width() +" > "+ $('.scroll-pane').width());
+					if( $('.scroll-content').width() > $('.scroll-pane').width() ){ $('.scroll-content').css('margin-left', Math.round( ui.value / 100 * ( $('.scroll-pane').width() - $('.scroll-content').width() )) + 'px'); }
+					else { $('.scroll-content').css('margin-left', 0); }
+					
+					CURSOR_POSITION_OFFSET = parseInt( $('.scroll-content').css('margin-left').replace("-","").replace("px","") );
+					toLog(CURSOR_POSITION_OFFSET);
+					
+					showLoopEnd();
+					showPosition(true);
+					
+				}
+			});	
+			
+			drawTimelineGrid();
+			
+		};	
+		
+		/*
+		* GUI Function: build timeline tempo grid
+		*/
+		function drawTimelineGrid(){
+			
+			if( $('#timeline-tempo-grid').size() > 0 ){
+				$('#timeline-tempo-grid').remove();
+			}
+			$('<canvas>')
+			.attr({
+				'id': 'timeline-tempo-grid',
+				'width': $('#cursor-timeline').css('width').replace('px',''),
+				'height': $('#cursor-timeline').css('height').replace('px',''),
+			})
+			.appendTo( $('#cursor-timeline') );
+			
+			
+			var canvas = document.getElementById('timeline-tempo-grid');
+      if (canvas.getContext) {
+        var ctx = canvas.getContext("2d");
+        
+        
+        ctx.strokeStyle = "#969696";
+        ctx.lineWidth=1;
+				ctx.beginPath(); 
+				
+				beatPixels = SCALE_FACTOR * 60 / player.bpm;
+				counter = 1;
+				for(var i = 0; i <= (TIMELINE_WIDTH / beatPixels); i++){
+					if(counter == 1){
+						ctx.moveTo((i*beatPixels)+0.5 ,0);  
+					}
+					else{
+						ctx.moveTo((i*beatPixels)+0.5 ,7);  
+					}
+					ctx.lineTo((i*beatPixels)+0.5,15);
+					
+					if(counter == player.tempo1){
+						counter = 1;
+					}
+					else{
+						counter++;
+					}
+					
+				}
+				ctx.stroke();
+      }
+		}
+		
+		/*
+		* GUI Function: shows the timeline position
+		*/
+		function showPosition(real){
+		
+			var minutes = "00";
+			var hours = "00";
+			var time = thisMovie().position().toString();
+			var secs = time.split(".")[0];
+			var milliseconds = time.split(".")[1];
+			if(typeof(milliseconds) !== 'undefined'){
+				milliseconds = milliseconds.substring(0,3);
+			}
+			else{
+				milliseconds = "000";
+			}
+			if(parseInt(secs) > 59){
+				var tmp = Math.round( parseInt(secs) / 60 );
+				if( tmp.toString().length == 1 ){
+					minutes = "0"+tmp;
+				}
+				else{
+					minutes = tmp.toString();
+				}
+				secs = parseInt(secs) - (60*tmp);
+			}
+			if( secs.toString().length == 1 ){
+				secs = "0"+secs;
+			}
+			else{
+				secs = secs.toString();
+			}
+			if( milliseconds.toString().length <= 3 ){
+				if(milliseconds.toString().length == 2){
+					milliseconds = milliseconds+"0";
+				}
+				else if(milliseconds.toString().length == 1){
+					milliseconds = milliseconds+"00";
+				}
+			}
+			else{
+				milliseconds = milliseconds.toString();
+			}
+			$('#display-milliseconds').html( milliseconds );
+			$('#display-seconds').html( secs );
+			$('#display-minutes').html( minutes );
+			
+			if(typeof(real) == 'undefined'){
+				empirical_factor = (0.3*SCALE_FACTOR);
+			}
+			else{ empirical_factor = 0; }
+			
+			var posLeft = ( Math.round((thisMovie().position()) * SCALE_FACTOR) - (CURSOR_POSITION_OFFSET) + $('#tracks').width() - empirical_factor);
+			$('#timelineCursor').css({
+				'height': $('#timeline').height(),
+				'left': posLeft+"px"
+			});
+			$('#timeline-ticker-canvas').css({
+				'left': (posLeft - 100 - 7)+"px"
+			})
+			.show();
+			
+			if(posLeft < $('#tracks').width() || posLeft > $('#timeline-container').width() ){
+				$('#timelineCursor').hide();
+			}
+			else{
+				$('#timelineCursor').show();
+			}
+		}
+		
+		/*
+		* GUI: set and show Loop End bar
+		*/
+		function showLoopEnd(){
+			// loop End Bar position
+			if(player.loop){
+				
+				var posLeft = ( Math.round((player.loopEnd) * SCALE_FACTOR) - (CURSOR_POSITION_OFFSET) + $('#tracks').width());
+				toLog(">>> "+posLeft);
+				
+				if( $('#loopEndCursor').size() == 0 ){
+					$('<div>').attr('id','loopEndCursor').css({
+						'width': '1px',
+						'position': 'absolute',
+						'z-index': '2',
+						'left' :'0',
+						'background-color': 'red',
+						'height': $('#timeline').height(),
+					})
+					.insertAfter( $('#timelineCursor') );
+				}
+				
+				$('#loopEndCursor').css({
+					'height': $('#timeline').height(),
+					'left': posLeft+"px"
+				});
+				$('#loop-end-ticker-canvas').css({
+					'left': (posLeft - 100 - 7)+"px"
+				})
+				.show();
+
+				if(posLeft < $('#tracks').width() || posLeft > $('#timeline-container').width() ){
+					$('#loopEndCursor').hide();
+				}
+				else{
+					toLog(">>> SHOW!!!");
+					$('#loopEndCursor').show();
+				}
+			}
+		}
+		
+		/*
+		* Temp functions: add some sounds
+		*/
+		function handleBrowser(string){
+			if(navigator.userAgent.toLowerCase().indexOf("chrome") != -1 ){
+				//return string.replace("localhost","10.80.6.27");
+				return string.replace("localhost","10.80.6.27");
+			}
+			else{
+				return string;
+			}
+		}
+		
+		var DEBUG = true;
+		function toLog(str){
+			if(DEBUG){
+				if(typeof(console)!='undefined'){
+					var d = new Date();
+					console.log("["+d.toLocaleTimeString()+" "+d.getMilliseconds()+"] "+str);
+				}
+			}
+		}
+		
+		/*
+		* GUI Function: add page listeners
+		*/
+		function addListeners(){
+			if(!RIGHT_CLICK_LISTENER){
+				/*
+				* Right Click Menu on waveform (canvas) click
+				*/
+				$('html').bind('click',function(e){
+					toLog( $(e.target).attr('id'));
+					if( $(e.target).attr('id') != 'right-click-menu'){
+						$('#right-click-menu').remove();
+					}
+				});
+				RIGHT_CLICK_LISTENER = true;
+			}
+		}
+		/*
+		* GUI Function: remove all page listeners 
+		*/
+		function removeListeners(){
+			if(RIGHT_CLICK_LISTENER){
+				$('html').unbind('rightClick');
+				RIGHT_CLICK_LISTENER = false;
+			}
+		}
+		
+		function addSomething(){
+			/*
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/acoustic 1_bip.mp3") );
+			
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/acoustic 2_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Basso Dry_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/drum_bip.mp3") );
+				//setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/drum_bip.mp3")), 1.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/guitar_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/guitar_rhythm_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Solo_bip.mp3") );
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/Tambourine 09_bip.mp3") );
+				//setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/Tambourine 09_bip.mp3")), 0.6);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/voce_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/voce_bip.mp3")), 0.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox2_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox2_bip.mp3")), 0.2);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox3_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox3_bip.mp3")), 0.2);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/vox4_bip.mp3") );
+				setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/vox4_bip.mp3")), 0.2);
+			*/
+			
+				addSound( handleBrowser("http://wcs.local/audio/micky_drum_rhythm_part.aif.mp3") );
+				addSound( handleBrowser("http://wcs.local/audio/micky_drum_rhythm_part.aif copia.mp3") );
+				
+				addSound( handleBrowser("http://wcs.local/audio/micky_guitar_export.mp3") );
+				
+				//addSound( handleBrowser("http://localhost:8888/Audio_Test/micky_drum_intermezzo.mp3") );
+				
+			
+			/*
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3")),3);
+				//setSoundVolume(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/testing123.mp3")), 0.5);
+				
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/click.mp3") );
+				
+				//addSound( handleBrowser("http://media.freesound.org/data/9/previews/9876__Heigh_hoo__car_door_closed_preview.mp3") );
+				//setSoundStart(thisMovie().getID( handleBrowser("http://media.freesound.org/data/9/previews/9876__Heigh_hoo__car_door_closed_preview.mp3")), 2.5);
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/door.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/door.mp3")), 2.5);
+				
+				addSound( handleBrowser("http://media.freesound.org/data/37/previews/37236__Shades__Gun_Pistol_one_shot__preview.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://media.freesound.org/data/37/previews/37236__Shades__Gun_Pistol_one_shot__preview.mp3")), 3.15);
+				//setSoundVolume(thisMovie().getID( handleBrowser("http://media.freesound.org/data/37/previews/37236__Shades__Gun_Pistol_one_shot__preview.mp3")), 0.2);
+		/*
+				addSound( handleBrowser("http://localhost:8888/Audio_Test/aerea.mp3") );
+				setSoundStart(thisMovie().getID( handleBrowser("http://localhost:8888/Audio_Test/aerea.mp3")), 0);
+		*/
+				setStart(0);
+		}
+		
+		function temporalZoom(value){
+			stop();
+			SCALE_FACTOR = value;
+			redrawWaveform(); 
+			makeSlider();
+			showPosition();
+			showLoopEnd();
+		}
+		function verticalZoom(value){
+			stop();
+			CANVAS_H = value;
+			$('.track-header').each(function(i, el){
+				$(el).css({
+					'height': CANVAS_H+"px"
+				});
+			});
+			redrawWaveform(); 
+			showPosition();
+			showLoopEnd();
+		}
+		
+		function removeLoop(){
+			// calculating timeline lenght
+			var length = 0;
+			$('canvas').each(function(i, el){
+				if( ($(el).width()) > length){
+					length = $(el).width();
+				}
+			});
+			var end = length / SCALE_FACTOR;
+			toLog("new end "+end);
+			setEnd( end );
+			$('#loop-end-ticker-canvas').remove();
+			$('#loopEndCursor').remove();
+			
+			$('[control=loop]')
+			.removeClass('player-button-active')
+			.addClass('player-button')
+			.unbind('click');
+		}
+		
+		function mute( id ){
+			thisMovie().setSoundVolume(id, 0);
+			soundsStore[id].mute = true;
+			
+			// GUI
+			$('#mute'+id)
+			.addClass('mute-active')
+			.unbind('click')
+			.click(function(){
+				unmute(id);
+				$(this).removeClass('mute-active');
+			})
+		}
+		function unmute( id ){
+			thisMovie().setSoundVolume(id, soundsStore[id].volume);
+			soundsStore[id].mute = false;
+			
+			// GUI
+			$('#mute'+id)
+			.unbind('click')
+			.click(function(){
+				mute(id);
+			})
+		}
+		function solo( id ){
+			for(var i=0; i < soundsStore.length; i++){
+				if(soundsStore[i].id == id){ 
+					soundsStore[i].solo = true;
+					continue; 
+				}
+				else{
+					thisMovie().setSoundVolume(soundsStore[i].id, 0);
+				}
+			}
+			
+			// GUI
+			$('#solo'+id)
+			.addClass('solo-active')
+			.unbind('click')
+			.click(function(){
+				unsolo(id);
+				$(this).removeClass('solo-active');
+			})
+		}
+		function unsolo(id){
+			for(var i=0; i < soundsStore.length; i++){				
+				if(soundsStore[i].mute == false){
+					thisMovie().setSoundVolume(soundsStore[i].id, soundsStore[i].volume);
+				}
+				soundsStore[i].solo = false;
+			}
+			
+			// GUI
+			$('#solo'+id)
+			.unbind('click')
+			.click(function(){
+				solo(id);
+			})
+		}
+		
+		function saveComposition(){
+			// GUI
+			$('[control=save]')
+			.html("<img src='images/ajax-loader-small.gif'><span style='font-size: 0.6em'>Saving...</span>")
+			.attr('disabled','true')
+			.css({
+				'width': '100px'
+			});
+			
+			// player variables
+			var tmpPlayer = player;
+			tmpPlayer.state = 'stopped';
+			tmpPlayer.keyPressed = false;
+			tmpPlayer.loop = false;
+			
+			// sounds
+			var tmpStore = soundsStore;
+			tmpPlayer.sounds = tmpStore;
+			
+			for(var i=0; i<tmpPlayer.sounds.length; i++){
+				tmpPlayer.sounds[i].samples = null;
+			}
+			var json = $.toJSON(tmpPlayer);
+			
+			var postData = "action=save&data="+json;
+			if(PROJECT_ID != null){
+				var postData = "action=update&data="+json+"&id="+PROJECT_ID;
+			}
+			// Ajax POST
+			$.ajax({
+				url: "api.php",
+				type: "POST",
+				data: postData,
+				success: function(data, textStatus, xhr){
+					if(data.indexOf("Not Found") == -1){
+						PROJECT_ID = data;
+					}
+					// GUI
+					$('[control=save]')
+					.html("Save")
+					.removeAttr('disabled')
+					.css({
+						'width': '60px'
+					});
+					
+					$('#project-id').html("ID: "+PROJECT_ID+"<br>Save this somewhere to work again on this project");
+					
+					toLog(data);
+					toLog(textStatus);
+					toLog(xhr);
+				}
+			});
+
+		}
+		
+		function loadComposition( id ){
+			
+			$('#spot-container').fadeIn();
+			$('#alert').fadeIn();
+			
+			$.ajax({
+				url: "api.php",
+				type: "POST",
+				data: "action=get&id="+id,
+				success: function(data, textStatus, xhr){
+					
+					try{
+						jsonString = data.replace(/\\"/g,'"');
+						toLog(jsonString);
+						//jsonString = '{"state":"stopped","bpm":"105","tempo1":"2","tempo2":4,"keyPressed":false,"loop":false,"sounds":[{"id":0,"label":"Drum1","url":"http://localhost:8888/Audio_Test/micky_drum_rhythm_part.aif.mp3","start":42.82111104329427,"volume":2,"mute":false,"solo":false,"loaded":false,"samples":null,"color":1,"length":18364.081632653062},{"id":1,"label":"Drum2","url":"http://localhost:8888/Audio_Test/micky_drum_rhythm_part.aif copia.mp3","start":5.1,"volume":2,"mute":false,"solo":false,"loaded":false,"samples":null,"color":2,"length":18364.081632653062},{"id":2,"label":"Guitar","url":"http://localhost:8888/Audio_Test/micky_guitar_export.mp3","start":0,"volume":1,"mute":false,"solo":false,"loaded":false,"samples":null,"color":0,"length":67056.32653061225},{"id":3,"label":"Drum3","url":"http://localhost:8888/Audio_Test/micky_drum_intermezzo.mp3","start":23.386666666666667,"volume":1,"mute":false,"solo":false,"loaded":false,"samples":null,"color":0,"length":19487.34693877551},{"id":4,"label":"Trumpet","url":"http://media.freesound.org/data/77/previews/77715__sorohanro__solo_trumpet_10in_F_90bpm_preview.mp3","start":24.12,"volume":0.3,"mute":false,"solo":false,"loaded":false,"samples":null,"color":0,"length":2742.8571428571427}]}';
+						var obj = $.evalJSON(jsonString);
+						toLog(obj.sounds.length);
+						player = obj;
+						soundsStore = obj.sounds;
+						player.sounds = null;
+						
+						for(var i=0; i<soundsStore.length; i++){
+							addSound(soundsStore[i].url, false);
+							setSoundVolume( soundsStore[i].id, soundsStore[i].volume );
+							setSoundStart( soundsStore[i].id, soundsStore[i].start );
+						}
+					
+						loadPlayerVars(player);
+						
+						PROJECT_ID = id;
+						$('#composition-load-link').remove();
+						$('#project-id').html("ID: "+PROJECT_ID+"<br>Save the ID somewhere to work again on this project");
+
+					}
+					catch(e){
+						$('#spot-container').fadeOut();
+						$('#alert').fadeOut();
+					}
+					
+				}
+			});
+			
+		}
+		
+		function loadPlayerVars(player){
+			$('#display-click-text').html(player.bpm);
+			$('#display-tempo1').html(player.tempo1);
+			drawTimelineGrid();
+		}
+		
+		function promptLoadComposition(){
+			var val = prompt("Insert the project ID to load","");
+			
+			if(val != null){
+				if( val.count('-') == 4 && val.length == 36){
+					loadComposition(val);
+				}
+				else{
+					alert('Invalid ID');
+				}
+			}
+
+		}
+		
+		String.prototype.count=function(s1) { 
+			return (this.length - this.replace(new RegExp(s1,"g"), '').length) / s1.length;
+		}
+		
+		
+		/*
+		* Freesound Functions
+		*/
+		function freesoundPanel(){
+			$('#spot-container').fadeIn();
+			
+			var input = $('<input>')
+			.attr({
+			'type': 'text',
+			'id': 'freesoundSearchText'
+			})
+			
+			var submit = $('<input>')
+			.attr({
+			'type': 'submit',
+			'id': 'freesoundSearchButton'
+			})
+			.click(function(){
+				
+				freesoundSearch();
+				
+			});
+			
+			$('<div>')
+			.attr({
+				'id': 'freesoundpanel'
+			})
+			.addClass('frontbox')
+			.append( $('<a>').css({
+					'float':'right',
+					'cursor': 'pointer'
+				})
+				.addClass('bold')
+				.text('Close')
+				.click(function(){
+					closeFreesoundPanel();
+				})
+			)
+			.append( $('<h2>').text('Search a sound') )
+			.append( input )
+			.append( submit )
+			.append( $('<div>').attr('id','freesoundPanelResults') )
+			.insertAfter('#alert')
+			.fadeIn();
+		}
+		
+		function freesoundSearch(start){
+		
+			/* GUI */
+			var button = $('#freesoundSearchButton');
+			$('#freesoundSearchButton')
+			.hide()
+			.after( $('<img>').attr({
+					'id': 'loadingImg',
+					'src': 'images/ajax-loader-small.gif'
+				})
+			);
+		
+		 	$('#freesoundPanelResults').html("");
+		 	if( $('#freesoundNext').size() > 0 ){
+		 		$('#freesoundNext').remove();
+		 	}
+		 	
+			var newStart = 0;
+			if(typeof(start) !== 'undefined'){
+				if( !isNaN(start) ){
+					newStart = start;
+				}
+			}
+			$.ajax({ 
+					url: "fs.php?action=search&userWords="+$('#freesoundSearchText').val()+"&start="+newStart, 
+					dataType: "xml",
+					success: function(xml){
+					
+						// insert the Next button
+						newStart += 10;
+						$("<div>")
+						.attr('id','freesoundNext')
+						.html( "<a href='#' onclick='freesoundSearch("+newStart+"); return false;' class='bold'>>> Next</a>" )
+						.css({
+							'text-align': 'right',
+							'font-size': '0.8em'
+						})
+						.insertAfter('#freesoundPanelResults');
+						
+						
+        		$('#loadingImg').remove();
+        		$('#freesoundSearchButton').show();
+        		
+        		$(xml).find('sample').each(function(i, val){
+        			toLog(i +" "+ $(val).attr('id'));
+        			$.ajax({ 
+        				url: "fs.php?action=item&id="+$(val).attr('id'), 
+        				dataType: "xml",
+        				success: function(data){
+        					var url = $(data).find('preview').text();
+        					
+        					var img = $(data).find('image').text();
+        					
+        					var id = $(data).find('sample').attr('id');
+        					
+        					var name = $(data).find('originalFilename').text();
+        					
+        					var text = $(data).find('text').text();
+        					
+        					// Embedding the small freesound swf player
+        					var swf = 'http://media.freesound.org/flash/preview-player-k.swf';  
+									var flashvars = {
+										'url': url,
+										'autostart': 0
+									};
+									var params = {
+										'name': 'flashPlayer_'+id
+									};
+									var attributes = {
+										id : 'flashPlayer_'+id
+									};
+									var version = swfobject.getFlashPlayerVersion();
+									toLog("Flash Player Version: "+version.major+"."+version.major+"."+version.release);
+									var requestedVersion = 10;
+									
+									$('<div>')
+									.attr({
+										'id': 'flashcontent_'+id
+									})
+									.addClass('freesound-result')
+									.appendTo('#freesoundPanelResults')
+									.append( $('<div>').attr('id','freesoundResultTitle'+id) )
+									.append( $('<div>').attr('id','fake'+id) )
+									.mouseover(function(){ $(this).css({ 'background-color':'#C2C2C2' }) })
+									.mouseout(function(){ $(this).css({ 'background-color':'#D6D6D6' }) })
+									
+									// change "radio" according to the div container id in your page !!!!
+									swfobject.embedSWF(swf, "fake"+id, "31", "15", "10.0.0", false, flashvars, params, attributes);
+									
+									$('#freesoundResultTitle'+id)
+									.append( $('<div>').html(name).insertBefore('#flashPlayer_'+id).css({ 'font-size':'0.8em' }) );
+									
+									$('#flashcontent_'+id)
+									.append( $('<img>').attr('src',img).attr('title',text).css({ 'width':'100px'}) )
+									.append( $('<button>').addClass('medium-button').html("Add").click(function(){ addSound( url ); scroll(0,0); }) )
+									.append( $('<hr>') );
+									
+        				}
+        			});
+        		})
+        		
+      		}
+      	});
+      	
+		}
+		
+		function closeFreesoundPanel(){
+			$('#spot-container').fadeOut();
+			$('#freesoundpanel').fadeOut();
+		}
+
+		
+	</script>
+	
+</head>
+<body onLoad="init();">
+	<div id="alert">
+		<span>
+			<img src="images/ajax-loader-medium.gif">
+			Loading...
+		</span>
+	</div>
+	<div id="spot-container">
+	</div>
+	
+
+	<!--object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"
+					 id="AudioEngineRunner" width="20" height="20"
+					 codebase="http://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab">
+			 <param name="movie" value="AudioEngineRunner.swf" />
+			 <param name="quality" value="high" />
+			 <param name="bgcolor" value="#869ca7" />
+			 <param name="allowScriptAccess" value="always" />
+			 <embed src="AudioEngineRunner.swf" quality="high" bgcolor="#869ca7"
+					 width="20" height="20" name="AudioEngineRunner" align="middle"
+					 play="false" loop="false" quality="high" allowScriptAccess="always"
+					 type="application/x-shockwave-flash"
+					 pluginspage="http://www.macromedia.com/go/getflashplayer">
+			 </embed>
+	 </object-->
+	 
+	 <div id="sequencer-control-panel">
+		 
+		  <div id="player-controls">
+		  	<button href="#" control="open" onclick="openSound(); return false;" class="player-button">
+			 	  <div class="open"></div>
+			  </button>
+			  <div style="width: 10px; display: inline-block"></div>
+		 		<button href="#" disabled="true" control="reset" onclick="reset(); return false;" class="player-button">
+			 	  <div class="reset"></div>
+			  </button>
+			  <button href="#" disabled="true" control="play" onclick="play(); return false;" class="player-button">
+			 	 <div class="play"></div>
+			  </button>
+			  <button href="#" disabled="true" control="pause" onclick="pause(); return false;" class="player-button" style="display: none">
+			 	  <div class="pause"></div>
+			  </button>
+			  <button href="#" disabled="true" control="stop" onclick="stop(); return false;" class="player-button">
+			  	<div class="stop"></div>
+			  </button>
+			  <button href="#" disabled="true" control="loop" class="player-button">
+					<div class="loop"></div>
+				</button>
+				<button href="#" disabled="true" control="click" onclick="activateClick(); return false;" class="player-button">
+					<div class="click"></div>
+				</button>
+			  <br>
+		  </div>
+		  <div id="display">
+		  	<div id="display-time">
+		 			<span id="display-hours">00</span>
+		 			<span>:</span>
+		 			<span id="display-minutes">00</span>
+		 			<span>:</span>
+		 			<span id="display-seconds">00</span>
+		 			<span> </span>
+		 			<span id="display-milliseconds">000</span>
+		  	</div>
+		  	<div id="display-click">
+		  		<span id="display-click-text">120</span>
+	  	 	</div>
+	  	 	<div id="display-tempo">
+	  	 		<span id="display-tempo1">4</span>/4
+		  	</div>
+		  </div>
+		 	
+		 	<div style="display: inline-block; padding: 4px;">
+			  <div style="padding: 4px;">Temporal Zoom</div>
+			  <div id="temporal-zoom-slider"></div>
+			  <!--button href="#" control="temporalZoomPlus" onclick="temporalZoom(); return false;">-</button>
+			  <button href="#" control="temporalZoomMinus" onclick="temporalZoom(true); return false;">+</button-->
+		  </div>
+		 
+		  <div style="display: inline-block; padding: 4px;">
+			  <div style="padding: 4px;">Vertical Zoom</div>
+			  <div id="vertical-zoom-slider"></div>
+			  <!--button href="#" control="verticalZoomPlus" onclick="verticalZoom(); return false;">-</button>
+			  <button href="#" control="verticalZoomMinus" onclick="verticalZoom(true); return false;">+</button-->
+		  </div>
+		  <button control="freesound" class="control-button" onclick="freesoundPanel();" style="float: none; width: 120px;">
+				Freesound
+			</button>
+		 
+		 <button href="#" control="addSomething" onclick="addSomething(); return false;">Add some sounds</button>	
+			
+			<button disabled="true" control="save" class="control-button" onclick="saveComposition()">
+				Save
+			</button>
+			<a href="#" id="composition-load-link" class="bold" onclick="promptLoadComposition(); return false;" style="float: right; margin-top: 20px;">Load</a>
+			<div id="project-id" style="opacity: 0.5; float: right; margin-right: 10px"></div>
+	 </div>
+	 
+	  <div id="ddd"></div>
+	 
+	 	
+	  <ul id="timeline-container" style="display:table;list-style:none outside none;padding:0;">
+	  	<li id="tracks" style="clear:both;display:table-cell;position:relative;vertical-align: top; padding-top: 16px">
+				<!-- tracks list -->
+				
+	  	</li>
+	  	<li style="clear:both;display:table-cell;position:relative;">
+				<!-- audio timeline -->
+				<div class="scroll-pane" style="overflow: hidden;">
+	
+					<div class="scroll-pane" style="overflow: hidden; position:fixed; top:42px;left:100px; z-index:50">
+						<div id="cursor-timeline" class="scroll-content" style=""></div>
+					</div>
+					<div id="timeline" class="scroll-content" style="padding: 0px; padding-top:16px; background-color: #5B5B5B"></div>
+			 
+					<div class="scroll-bar-wrap ui-widget-content ui-corner-bottom">
+						<div class="scroll-bar"></div>
+					</div>
+				</div>
+		  </li>
+		  
+	  </ul>
+
+</body>
+</html>
